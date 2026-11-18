@@ -1,0 +1,22 @@
+# dependencies.yaml — Swarm Skill startup dependency check
+# Read in SKILL.md Workflow Step 0. Results are reported to the user, who decides go/no-go.
+
+skills:
+  - name: project-maintainer
+    source: local
+    required: false
+    purpose: Lets the architect keep structured, durable project docs alongside .devco/PLAYBOOK.md. Without it, the playbook alone carries project memory.
+
+tools:
+  - name: git
+    required: true
+    purpose: Every role works on a run branch and commits its own changes. Without git there is no isolation, history or rollback.
+  - name: python
+    required: false
+    purpose: Runs Python backends, pytest suites and pip-audit. Needed only when the project or chosen stack uses Python.
+  - name: node
+    required: false
+    purpose: Runs the frontend toolchain (npm/pnpm, Vite, component tests, npm audit). Needed for any JavaScript/TypeScript frontend.
+  - name: docker
+    required: false
+    purpose: Lets DevOps/SRE build and smoke-test containers and docker compose. Without it, container files are written but not verified.

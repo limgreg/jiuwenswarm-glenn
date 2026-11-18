@@ -32,6 +32,7 @@
   - [Skills](Skills.md)
   - [Symphony](symphony.md)
   - [Team Skills](SwarmSkills.md)
+  - [Full-Stack DevCo Swarm](FullStackDevCoSwarm.md)
   - [Skill self-evolution](SkillSelfEvolution.md)
   - [Agent & workspace](Agent.md)
   - [Session management](Session.md)

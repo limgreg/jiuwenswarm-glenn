@@ -612,6 +612,15 @@ def _update_skills_state_for_builtin(
         logger.error(f"保存技能状态文件失败: {e}")
 
 
+# 默认安装到用户技能目录的内置技能（首次初始化 + 每次启动幂等补齐）
+DEFAULT_BUILTIN_SKILLS: tuple[str, ...] = (
+    "skill-creator",
+    "swarmskill-creator",
+    "huawei-cloud-maas-setup",
+    "fullstack-devco-swarm",
+)
+
+
 def _install_default_builtin_skills(
     builtin_dir: Path,
     user_skills_dir: Path,
@@ -624,6 +633,7 @@ def _install_default_builtin_skills(
     - skill-creator: 技能创建助手
     - swarmskill-creator: Swarm技能创建助手
     - huawei-cloud-maas-setup: 华为云MaaS购买与配置引导
+    - fullstack-devco-swarm: 全栈应用开发公司 Swarm Skill（构建 / 功能迭代 / 自维护）
 
     Args:
         builtin_dir: 内置技能目录路径
@@ -632,7 +642,7 @@ def _install_default_builtin_skills(
         cumulative_diff: 累积的文件变更追踪结果
     """
     # 定义默认安装的技能列表
-    default_skills = ["skill-creator", "swarmskill-creator", "huawei-cloud-maas-setup"]
+    default_skills = list(DEFAULT_BUILTIN_SKILLS)
 
     if not builtin_dir.exists() or not builtin_dir.is_dir():
         logger.warning(f"内置技能目录不存在，跳过默认技能安装: {builtin_dir}")
@@ -691,7 +701,7 @@ def ensure_default_builtin_skills() -> None:
         logger.warning(f"内置技能目录不存在，跳过默认技能补齐: {builtin_dir}")
         return
 
-    default_skills = ["skill-creator", "swarmskill-creator", "huawei-cloud-maas-setup"]
+    default_skills = list(DEFAULT_BUILTIN_SKILLS)
 
     user_skills_dir.mkdir(parents=True, exist_ok=True)
 
