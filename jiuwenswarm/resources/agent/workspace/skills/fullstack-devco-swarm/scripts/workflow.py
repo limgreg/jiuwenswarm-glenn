@@ -28,6 +28,18 @@ Args (dict or JSON string):
     max_tickets      int   maintenance tickets per sweep, 1..8 (default 5)
     signals          str   optional extra input for maintain mode: CI logs,
                            error reports, issue list, user complaints
+    models           dict  model per role or group, e.g.
+                           {"default": "deepseek-chat", "planning": "gpt-4o",
+                            "engineering": "qwen3-coder", "security": "claude-sonnet"}
+                           Keys: default | planning | engineering | review |
+                           any role id or short alias (pm, backend, qa, ...).
+                           Names must exist in the team model pool
+                           (config.yaml models.defaults); omitted roles
+                           inherit the team default model.
+    agent_types      dict  external CLI worker per role or group, e.g.
+                           {"backend": "codex", "frontend": "claude"}
+    available_models list  optional model-pool names; overrides not in the
+                           list are dropped before the run starts
 """
 import json
 from string import Template
@@ -632,6 +644,156 @@ def bullets(items):
 
 
 # ---------------------------------------------------------------------------
+# Model routing: per-role / per-group models and external CLI workers
+# ---------------------------------------------------------------------------
+# Precedence for each role: role key > group key > "default" > team default.
+ROLE_GROUPS = {
+    "product-manager": "planning",
+    "architect": "planning",
+    "backend-engineer": "engineering",
+    "frontend-engineer": "engineering",
+    "devops-sre": "engineering",
+    "qa-engineer": "review",
+    "security-reviewer": "review",
+}
+KEY_ALIASES = {
+    "pm": "product-manager",
+    "product": "product-manager",
+    "product-manager": "product-manager",
+    "architect": "architect",
+    "tech-lead": "architect",
+    "techlead": "architect",
+    "backend": "backend-engineer",
+    "backend-engineer": "backend-engineer",
+    "frontend": "frontend-engineer",
+    "frontend-engineer": "frontend-engineer",
+    "devops": "devops-sre",
+    "sre": "devops-sre",
+    "devops-sre": "devops-sre",
+    "qa": "qa-engineer",
+    "qa-engineer": "qa-engineer",
+    "security": "security-reviewer",
+    "security-reviewer": "security-reviewer",
+    "planning": "planning",
+    "plan": "planning",
+    "engineering": "engineering",
+    "engineers": "engineering",
+    "build": "engineering",
+    "review": "review",
+    "reviewers": "review",
+    "verify": "review",
+    "default": "default",
+    "all": "default",
+    "*": "default",
+}
+
+
+def normalize_role_map(raw, warnings):
+    """Normalize a role/group -> value mapping (dict or JSON string)."""
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return {}
+        try:
+            raw = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return {"default": text}
+    if not isinstance(raw, dict):
+        return {}
+    mapping = {}
+    for key, value in raw.items():
+        norm_key = str(key).strip().lower().replace("_", "-").replace(" ", "-")
+        target = KEY_ALIASES.get(norm_key)
+        if target is None:
+            warnings.append("unknown model routing key ignored: " + str(key))
+            continue
+        name = str(value or "").strip()
+        if name:
+            mapping[target] = name
+    return mapping
+
+
+def normalize_name_list(raw):
+    """Normalize a list of model names (list or comma-separated string)."""
+    if isinstance(raw, str):
+        raw = [part for part in raw.split(",")]
+    if not isinstance(raw, list):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def build_model_plan(models_arg, agent_types_arg, available_arg, warnings):
+    """Resolve the model / external-agent assignment for every role."""
+    models = normalize_role_map(models_arg, warnings)
+    agent_types = normalize_role_map(agent_types_arg, warnings)
+    available = normalize_name_list(available_arg)
+    plan = {}
+    for role, group in ROLE_GROUPS.items():
+        model = models.get(role) or models.get(group) or models.get("default") or ""
+        if model and available and model not in available:
+            warnings.append(
+                "model " + model + " for " + role + " is not in available_models; "
+                "using the team default instead"
+            )
+            model = ""
+        agent_type = agent_types.get(role) or agent_types.get(group) or agent_types.get("default") or ""
+        plan[role] = {"model": model, "agent_type": agent_type}
+    return plan
+
+
+def role_options(plan, role):
+    """SwarmFlow options for a role, or None to inherit the team default."""
+    entry = plan.get(role) or {}
+    opts = {}
+    if entry.get("model"):
+        opts["model"] = entry["model"]
+    if entry.get("agent_type"):
+        opts["agent_type"] = entry["agent_type"]
+    return opts or None
+
+
+def option_chain(opts):
+    """Ordered option sets to try: routed -> CLI default model -> team default."""
+    chain = []
+    if opts:
+        chain.append(opts)
+        if opts.get("agent_type") and opts.get("model"):
+            chain.append({"agent_type": opts["agent_type"]})
+    chain.append({})
+    return chain
+
+
+async def ask(prompt, *, label, stage, schema, role, run_ctx):
+    """Run one role's agent call with its routed model / external agent.
+
+    Fallback chain when a routed call is rejected (model not in the team
+    model pool, external CLI missing or unauthenticated, provider mismatch)
+    or returns nothing:
+      1. routed options          e.g. {"model": "m", "agent_type": "codex"}
+      2. external CLI, own model {"agent_type": "codex"}   (only if both set)
+      3. team default model      {}
+    so a bad routing entry never stalls the company. Budget exhaustion and
+    aborts are BaseException subclasses and always propagate.
+    """
+    chain = option_chain(role_options(run_ctx["model_plan"], role))
+    for opts in chain[:-1]:
+        error_text = ""
+        try:
+            result = await agent(prompt, label=label, phase=stage, schema=schema, options=opts)
+        except Exception as exc:  # noqa: BLE001 - routing errors must degrade, not abort
+            result = None
+            error_text = type(exc).__name__ + ": " + str(exc)[:300]
+        if result is not None:
+            return result
+        run_ctx["model_fallbacks"].append(
+            {"role": role, "label": label, "options": opts, "error": error_text or "empty result"}
+        )
+        log("Model routing for " + label + " with " + json.dumps(opts, sort_keys=True)
+            + " failed (" + (error_text or "empty result") + "); trying next fallback")
+    return await agent(prompt, label=label, phase=stage, schema=schema)
+
+
+# ---------------------------------------------------------------------------
 # Workflow entrypoint
 # ---------------------------------------------------------------------------
 
@@ -647,7 +809,16 @@ async def run(args):
     max_fix_rounds = clamp_int(args.get("max_fix_rounds"), 2, 0, MAX_FIX_ROUNDS_CAP)
     max_tickets = clamp_int(args.get("max_tickets"), 5, 1, MAX_TICKETS_CAP)
     branch = str(args.get("branch") or "").strip() or ("devco/" + mode)
-    run_ctx = {"mode": mode, "project_dir": project_dir}
+    model_warnings = []
+    model_plan = build_model_plan(
+        args.get("models"), args.get("agent_types"), args.get("available_models"), model_warnings
+    )
+    run_ctx = {
+        "mode": mode,
+        "project_dir": project_dir,
+        "model_plan": model_plan,
+        "model_fallbacks": [],
+    }
     base_context = {
         "request": request,
         "stack_preference": str(args.get("stack") or ""),
@@ -660,13 +831,20 @@ async def run(args):
         "branch": branch,
         "status": "running",
         "stages": {},
-        "warnings": [],
+        "warnings": list(model_warnings),
+        "model_plan": model_plan,
     }
     halted = False
     requirements = {}
     tickets = []
 
     log("DevCo run: mode=" + mode + " project=" + project_dir + " branch=" + branch)
+    routed = [
+        role + "=" + (entry["agent_type"] + ":" if entry["agent_type"] else "") + (entry["model"] or "default")
+        for role, entry in model_plan.items()
+        if entry["model"] or entry["agent_type"]
+    ]
+    log("Model routing: " + (", ".join(routed) if routed else "all roles on the team default model"))
     if mode != "maintain" and not request:
         log("No request given for build/feature mode; falling back to maintain mode")
         mode = "maintain"
@@ -681,26 +859,32 @@ async def run(args):
         scan_context = dict(base_context, signals=str(args.get("signals") or ""))
         raw_scans = await parallel(
             [
-                lambda: agent(
+                lambda: ask(
                     build_prompt("DevOps / SRE", PERSONA_DEVOPS, TASK_HEALTH_DEVOPS,
                                  scan_context, "result, verdict, findings[]", run_ctx),
                     label="devops-sre-scan",
-                    phase="Intake",
+                    stage="Intake",
                     schema=HEALTH_SCHEMA,
+                    role="devops-sre",
+                    run_ctx=run_ctx,
                 ),
-                lambda: agent(
+                lambda: ask(
                     build_prompt("QA Engineer", PERSONA_QA, TASK_HEALTH_QA,
                                  scan_context, "result, verdict, findings[]", run_ctx),
                     label="qa-engineer-scan",
-                    phase="Intake",
+                    stage="Intake",
                     schema=HEALTH_SCHEMA,
+                    role="qa-engineer",
+                    run_ctx=run_ctx,
                 ),
-                lambda: agent(
+                lambda: ask(
                     build_prompt("Security Reviewer", PERSONA_SECURITY, TASK_HEALTH_SECURITY,
                                  scan_context, "result, verdict, findings[]", run_ctx),
                     label="security-reviewer-scan",
-                    phase="Intake",
+                    stage="Intake",
                     schema=HEALTH_SCHEMA,
+                    role="security-reviewer",
+                    run_ctx=run_ctx,
                 ),
             ]
         )
@@ -708,7 +892,7 @@ async def run(args):
         missing_scans = 3 - len([s for s in scans if has_meaningful_result(s)])
         if missing_scans:
             report["warnings"].append(str(missing_scans) + " health scanner(s) returned no usable result")
-        triage_raw = await agent(
+        triage_raw = await ask(
             build_prompt(
                 "Product Manager", PERSONA_PM, TASK_TRIAGE,
                 dict(scan_context, max_tickets=max_tickets, health_scans=scans),
@@ -716,8 +900,10 @@ async def run(args):
                 run_ctx,
             ),
             label="product-manager-triage",
-            phase="Intake",
+            stage="Intake",
             schema=TRIAGE_SCHEMA,
+            role="product-manager",
+            run_ctx=run_ctx,
         )
         triage = extract_json(triage_raw, fallback={})
         tickets = [t for t in safe_list(triage, "tickets") if isinstance(t, dict)]
@@ -733,28 +919,32 @@ async def run(args):
     else:
         prd_context = dict(base_context)
         prd = extract_json(
-            await agent(
+            await ask(
                 build_prompt("Product Manager", PERSONA_PM, TASK_PRD, prd_context,
                              "result, verdict, title, user_stories[], acceptance_criteria[], "
                              "non_goals[], open_questions[]", run_ctx),
                 label="product-manager-prd",
-                phase="Intake",
+                stage="Intake",
                 schema=PRD_SCHEMA,
+                role="product-manager",
+                run_ctx=run_ctx,
             ),
             fallback={},
         )
         if not safe_list(prd, "acceptance_criteria"):
             log("PRD came back without acceptance criteria; retrying once")
             prd = extract_json(
-                await agent(
+                await ask(
                     build_prompt("Product Manager", PERSONA_PM,
                                  TASK_PRD + "\nYour previous answer had no acceptance criteria. Fix that.",
                                  prd_context,
                                  "result, verdict, title, user_stories[], acceptance_criteria[], "
                                  "non_goals[], open_questions[]", run_ctx),
                     label="product-manager-prd-retry",
-                    phase="Intake",
+                    stage="Intake",
                     schema=PRD_SCHEMA,
+                    role="product-manager",
+                    run_ctx=run_ctx,
                 ),
                 fallback={},
             )
@@ -777,14 +967,16 @@ async def run(args):
             if not approved and feedback.strip() and feedback != "no answer from client":
                 log("Client requested PRD changes; PM revises once")
                 prd = extract_json(
-                    await agent(
+                    await ask(
                         build_prompt("Product Manager", PERSONA_PM, TASK_PRD,
                                      dict(prd_context, previous_prd=prd, client_feedback=feedback),
                                      "result, verdict, title, user_stories[], acceptance_criteria[], "
                                      "non_goals[], open_questions[]", run_ctx),
                         label="product-manager-prd-revision",
-                        phase="Intake",
+                        stage="Intake",
                         schema=PRD_SCHEMA,
+                        role="product-manager",
+                        run_ctx=run_ctx,
                     ),
                     fallback=prd,
                 )
@@ -815,14 +1007,16 @@ async def run(args):
     design = {}
     if not halted:
         design = extract_json(
-            await agent(
+            await ask(
                 build_prompt("Architect / Tech Lead", PERSONA_ARCHITECT, TASK_DESIGN,
                              dict(base_context, requirements=requirements),
                              "result, verdict, stack, api_contract, data_model, "
                              "lanes[] (id, owner, title, scope, paths[])", run_ctx),
                 label="architect-design",
-                phase="Architecture",
+                stage="Architecture",
                 schema=DESIGN_SCHEMA,
+                role="architect",
+                run_ctx=run_ctx,
             ),
             fallback={},
         )
@@ -861,26 +1055,32 @@ async def run(args):
         log("Building " + str(len(lanes)) + " lanes across: " + ", ".join(owners))
         raw_builds = await parallel([
             thunk for owner, thunk in [
-                ("backend-engineer", lambda: agent(
+                ("backend-engineer", lambda: ask(
                     build_prompt("Backend Engineer", PERSONA_BACKEND, TASK_LANE,
                                  dict(shared, lanes=by_owner["backend-engineer"]), fields, run_ctx),
                     label="backend-engineer",
-                    phase="Build",
+                    stage="Build",
                     schema=LANE_RESULT_SCHEMA,
+                    role="backend-engineer",
+                    run_ctx=run_ctx,
                 )),
-                ("frontend-engineer", lambda: agent(
+                ("frontend-engineer", lambda: ask(
                     build_prompt("Frontend Engineer", PERSONA_FRONTEND, TASK_LANE,
                                  dict(shared, lanes=by_owner["frontend-engineer"]), fields, run_ctx),
                     label="frontend-engineer",
-                    phase="Build",
+                    stage="Build",
                     schema=LANE_RESULT_SCHEMA,
+                    role="frontend-engineer",
+                    run_ctx=run_ctx,
                 )),
-                ("devops-sre", lambda: agent(
+                ("devops-sre", lambda: ask(
                     build_prompt("DevOps / SRE", PERSONA_DEVOPS, TASK_LANE,
                                  dict(shared, lanes=by_owner["devops-sre"]), fields, run_ctx),
                     label="devops-sre",
-                    phase="Build",
+                    stage="Build",
                     schema=LANE_RESULT_SCHEMA,
+                    role="devops-sre",
+                    run_ctx=run_ctx,
                 )),
             ] if by_owner[owner]
         ])
@@ -910,19 +1110,23 @@ async def run(args):
         for fix_round in range(max_fix_rounds + 1):
             raw_reviews = await parallel(
                 [
-                    lambda: agent(
+                    lambda: ask(
                         build_prompt("QA Engineer", PERSONA_QA, TASK_QA_REVIEW,
                                      dict(verify_context, fix_round=fix_round), review_fields, run_ctx),
                         label="qa-engineer",
-                        phase="Verify & Fix",
+                        stage="Verify & Fix",
                         schema=REVIEW_SCHEMA,
+                        role="qa-engineer",
+                        run_ctx=run_ctx,
                     ),
-                    lambda: agent(
+                    lambda: ask(
                         build_prompt("Security Reviewer", PERSONA_SECURITY, TASK_SECURITY_REVIEW,
                                      dict(verify_context, fix_round=fix_round), review_fields, run_ctx),
                         label="security-reviewer",
-                        phase="Verify & Fix",
+                        stage="Verify & Fix",
                         schema=REVIEW_SCHEMA,
+                        role="security-reviewer",
+                        run_ctx=run_ctx,
                     ),
                 ]
             )
@@ -949,29 +1153,35 @@ async def run(args):
             log("Fix round " + str(fix_round + 1) + ": dispatching " + ", ".join(fix_owners))
             raw_fixes = await parallel([
                 thunk for owner, thunk in [
-                    ("backend-engineer", lambda: agent(
+                    ("backend-engineer", lambda: ask(
                         build_prompt("Backend Engineer", PERSONA_BACKEND, TASK_FIX,
                                      dict(verify_context, defects=by_owner_defects["backend-engineer"]),
                                      fix_fields, run_ctx),
                         label="backend-engineer-fix",
-                        phase="Verify & Fix",
+                        stage="Verify & Fix",
                         schema=LANE_RESULT_SCHEMA,
+                        role="backend-engineer",
+                        run_ctx=run_ctx,
                     )),
-                    ("frontend-engineer", lambda: agent(
+                    ("frontend-engineer", lambda: ask(
                         build_prompt("Frontend Engineer", PERSONA_FRONTEND, TASK_FIX,
                                      dict(verify_context, defects=by_owner_defects["frontend-engineer"]),
                                      fix_fields, run_ctx),
                         label="frontend-engineer-fix",
-                        phase="Verify & Fix",
+                        stage="Verify & Fix",
                         schema=LANE_RESULT_SCHEMA,
+                        role="frontend-engineer",
+                        run_ctx=run_ctx,
                     )),
-                    ("devops-sre", lambda: agent(
+                    ("devops-sre", lambda: ask(
                         build_prompt("DevOps / SRE", PERSONA_DEVOPS, TASK_FIX,
                                      dict(verify_context, defects=by_owner_defects["devops-sre"]),
                                      fix_fields, run_ctx),
                         label="devops-sre-fix",
-                        phase="Verify & Fix",
+                        stage="Verify & Fix",
                         schema=LANE_RESULT_SCHEMA,
+                        role="devops-sre",
+                        run_ctx=run_ctx,
                     )),
                 ] if by_owner_defects[owner]
             ])
@@ -984,7 +1194,7 @@ async def run(args):
     phase("Release")
     if not halted:
         release = extract_json(
-            await agent(
+            await ask(
                 build_prompt("DevOps / SRE", PERSONA_DEVOPS, TASK_RELEASE,
                              {"branch": branch, "requirements": requirements,
                               "build_results": build_results,
@@ -992,8 +1202,10 @@ async def run(args):
                              "result, verdict, branch, release_notes, run_instructions, deploy_steps",
                              run_ctx),
                 label="devops-sre-release",
-                phase="Release",
+                stage="Release",
                 schema=RELEASE_SCHEMA,
+                role="devops-sre",
+                run_ctx=run_ctx,
             ),
             fallback={"result": "release packaging failed", "verdict": "not_ready"},
         )
@@ -1022,14 +1234,16 @@ async def run(args):
         shipped = None
         if ship:
             shipped = extract_json(
-                await agent(
+                await ask(
                     build_prompt("DevOps / SRE", PERSONA_DEVOPS, TASK_SHIP,
                                  {"branch": branch, "release": release},
                                  "result, verdict, branch, release_notes, run_instructions, deploy_steps",
                                  run_ctx),
                     label="devops-sre-ship",
-                    phase="Release",
+                    stage="Release",
                     schema=RELEASE_SCHEMA,
+                    role="devops-sre",
+                    run_ctx=run_ctx,
                 ),
                 fallback={"result": "ship step failed", "verdict": "failed"},
             )
@@ -1044,7 +1258,7 @@ async def run(args):
     # ----------------------------------------------------------- Retrospective
     phase("Retrospective")
     retro = extract_json(
-        await agent(
+        await ask(
             build_prompt(
                 "Architect / Tech Lead (retrospective)", PERSONA_ARCHITECT, TASK_RETRO,
                 {"branch": branch, "status": report["status"], "warnings": report["warnings"],
@@ -1057,14 +1271,21 @@ async def run(args):
                 run_ctx,
             ),
             label="tech-lead-retro",
-            phase="Retrospective",
+            stage="Retrospective",
             schema=RETRO_SCHEMA,
+            role="architect",
+            run_ctx=run_ctx,
         ),
         fallback={"result": "retro failed", "verdict": "unknown"},
     )
     report["stages"]["retrospective"] = retro
     report["skill_improvements"] = safe_list(retro, "skill_improvements")
     report["next_maintenance_focus"] = safe_list(retro, "next_maintenance_focus")
+    report["model_fallbacks"] = run_ctx["model_fallbacks"]
+    if run_ctx["model_fallbacks"]:
+        report["warnings"].append(
+            str(len(run_ctx["model_fallbacks"])) + " call(s) fell back to the team default model"
+        )
     if report["status"] == "running":
         report["status"] = "degraded"
     log("DevCo run finished with status " + report["status"])

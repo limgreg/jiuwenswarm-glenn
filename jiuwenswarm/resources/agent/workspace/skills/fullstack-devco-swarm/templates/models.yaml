@@ -1,0 +1,31 @@
+# DevCo model routing — copy to <project>/.devco/models.yaml and edit.
+#
+# The Leader reads this file before every run and passes it to
+# scripts/workflow.py as the `models` / `agent_types` args.
+#
+# Model names must exist in the team model pool, i.e. as `model_name` of an
+# entry under `models.defaults` in ~/.jiuwenswarm/config/config.yaml (the pool
+# is built when 2+ entries are configured). A name that is not in the pool, or
+# an external CLI that fails, falls back automatically:
+#   routed model -> external CLI's own default model -> team default model.
+#
+# Precedence per role: role key > group key > default > team default.
+# Groups:  planning    = product-manager, architect
+#          engineering = backend-engineer, frontend-engineer, devops-sre
+#          review      = qa-engineer, security-reviewer
+# Role keys accept short aliases: pm, tech-lead, backend, frontend, devops/sre, qa, security.
+
+models:
+  # default: deepseek-chat            # every role not listed below
+  # planning: gpt-4o                  # strong reasoning for PRD + architecture
+  # engineering: qwen3-coder          # code-specialised model for builders
+  # review: claude-sonnet-4           # a *different* model family catches more defects
+  # security: deepseek-reasoner       # per-role override wins over its group
+
+# Optional: run a role through an external coding-agent CLI instead of the
+# native worker (install with `pip install "jiuwenswarm[claude]"` / `[codex]`).
+#   claude -> needs an Anthropic-compatible pool model (or omit the model)
+#   codex  -> needs an OpenAI-compatible pool model (or omit the model)
+agent_types:
+  # backend: codex
+  # frontend: claude

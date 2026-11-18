@@ -28,8 +28,10 @@ VALIDATOR = SKILLS_ROOT / "swarmskill-creator" / "scripts" / "validate_swarmskil
 class _StubRuntime:
     """Minimal stand-in for the ``swarmflow`` facade."""
 
-    def __init__(self, handlers=None, human_answers=None):
+    def __init__(self, handlers=None, human_answers=None, rejected_models=()):
         self.events: list[tuple] = []
+        self.options: list[tuple[str, dict]] = []
+        self.rejected_models = set(rejected_models)
         self.handlers = handlers or {}
         self.human_answers = list(human_answers or [])
 
@@ -54,6 +56,9 @@ class _StubRuntime:
 
         async def agent(prompt, *, label=None, phase=None, schema=None, options=None):
             self.events.append(("agent", label, phase))
+            self.options.append((label, dict(options or {})))
+            if options and options.get("model") in self.rejected_models:
+                raise RuntimeError("model not in the model pool")
             assert "$" not in prompt.split("CONTEXT (JSON)")[0], "unsubstituted template var"
             handler = self.handlers.get(label)
             if handler is not None:
@@ -204,3 +209,118 @@ def test_mode_normalization(monkeypatch, raw, expected):
     spec.loader.exec_module(module)
     assert module.normalize_mode(raw, "some request") == expected
     assert module.normalize_mode("", "") == "maintain"
+
+
+def test_model_routing_precedence_role_over_group_over_default(monkeypatch):
+    report, rt = _run(
+        monkeypatch,
+        {
+            "request": "x", "auto_approve": True,
+            "models": {"default": "base-model", "engineering": "coder-model",
+                       "frontend": "ui-model", "Security": "sec-model"},
+            "agent_types": {"backend": "codex"},
+        },
+    )
+    plan = report["model_plan"]
+    assert plan["product-manager"]["model"] == "base-model"
+    assert plan["backend-engineer"] == {"model": "coder-model", "agent_type": "codex"}
+    assert plan["frontend-engineer"]["model"] == "ui-model"
+    assert plan["devops-sre"]["model"] == "coder-model"
+    assert plan["security-reviewer"]["model"] == "sec-model"
+    assert plan["qa-engineer"]["model"] == "base-model"
+    sent = dict(rt.options)
+    assert sent["frontend-engineer"] == {"model": "ui-model"}
+    assert sent["backend-engineer"] == {"model": "coder-model", "agent_type": "codex"}
+    assert sent["security-reviewer"] == {"model": "sec-model"}
+    assert report["model_fallbacks"] == []
+
+
+def test_no_routing_sends_no_options(monkeypatch):
+    _report, rt = _run(monkeypatch, {"request": "x", "auto_approve": True})
+    assert all(opts == {} for _label, opts in rt.options)
+
+
+def test_rejected_model_falls_back_to_team_default(monkeypatch):
+    report, rt = _run(
+        monkeypatch,
+        {"request": "x", "auto_approve": True, "models": {"planning": "missing-model"}},
+        rejected_models={"missing-model"},
+    )
+    assert report["status"] == "shipped"
+    fallback_labels = {f["label"] for f in report["model_fallbacks"]}
+    assert {"product-manager-prd", "architect-design", "tech-lead-retro"} <= fallback_labels
+    retried = [opts for label, opts in rt.options if label == "architect-design"]
+    assert retried == [{"model": "missing-model"}, {}]
+    assert any("fell back" in w for w in report["warnings"])
+
+
+def test_available_models_filters_unknown_names_and_keys(monkeypatch):
+    report, rt = _run(
+        monkeypatch,
+        {"request": "x", "auto_approve": True,
+         "models": json.dumps({"default": "good", "review": "typo-model", "intern": "x"}),
+         "available_models": "good, other"},
+    )
+    plan = report["model_plan"]
+    assert plan["qa-engineer"]["model"] == ""
+    assert plan["backend-engineer"]["model"] == "good"
+    assert any("typo-model" in w for w in report["warnings"])
+    assert any("intern" in w for w in report["warnings"])
+    assert dict(rt.options)["qa-engineer"] == {}
+
+
+def test_external_agent_falls_back_to_cli_default_model_then_team_default(monkeypatch):
+    report, rt = _run(
+        monkeypatch,
+        {"request": "x", "auto_approve": True,
+         "models": {"backend": "openai-only-model"}, "agent_types": {"backend": "claude"}},
+        rejected_models={"openai-only-model"},
+    )
+    attempts = [opts for label, opts in rt.options if label == "backend-engineer"]
+    assert attempts == [{"model": "openai-only-model", "agent_type": "claude"}, {"agent_type": "claude"}]
+    assert report["status"] == "shipped"
+    assert len([f for f in report["model_fallbacks"] if f["label"] == "backend-engineer"]) == 1
+
+
+def test_runs_on_real_swarmflow_engine_with_model_pool():
+    """End-to-end on openJiuwen's SwarmFlow engine (offline mock backend)."""
+    runner = pytest.importorskip("openjiuwen.agent_teams.workflow.engine.runner")
+    mock = pytest.importorskip("openjiuwen.agent_teams.workflow.engine.backends.mock")
+
+    calls: list[tuple] = []
+
+    class PoolBackend(mock.MockBackend):
+        def model_pool_names(self):
+            return ["deepseek-chat", "qwen3-coder"]
+
+        async def run(self, prompt, opts, schema_json, *, call_key=None):
+            calls.append((opts.get("label"), opts.get("model"), opts.get("agent_type")))
+            return await super().run(prompt, opts, schema_json, call_key=call_key)
+
+    review = {"result": "review", "verdict": "pass", "defects": []}
+    fixtures = {
+        "product-manager-prd": {"result": "prd", "verdict": "ready", "title": "Todo",
+                                "user_stories": ["s"], "acceptance_criteria": ["c"]},
+        "architect-design": {"result": "d", "verdict": "ready", "stack": "fastapi",
+                             "lanes": [{"id": "L1", "owner": "backend-engineer", "paths": ["backend/"]}]},
+        "backend-engineer": {"result": "built", "verdict": "done"},
+        "qa-engineer": review,
+        "security-reviewer": review,
+        "devops-sre-release": {"result": "pkg", "verdict": "ready", "release_notes": "n"},
+        "devops-sre-ship": {"result": "pr", "verdict": "done"},
+        "tech-lead-retro": {"result": "retro", "verdict": "done"},
+    }
+    args = {"request": "todo app", "project_dir": "/srv/app", "auto_approve": True,
+            "models": {"default": "deepseek-chat", "engineering": "qwen3-coder", "review": "not-in-pool"}}
+    logs: list[str] = []
+    report = asyncio.run(runner.run_workflow(
+        str(WORKFLOW), args=args, backend=PoolBackend(fixtures=fixtures), log_sink=logs.append,
+    ))
+
+    assert report["status"] == "shipped"
+    assert not [line for line in logs if "[lint]" in line]
+    assert ("backend-engineer", "qwen3-coder", None) in calls
+    assert ("architect-design", "deepseek-chat", None) in calls
+    # "not-in-pool" is rejected by the engine and retried on the team default.
+    assert ("qa-engineer", None, None) in calls
+    assert {f["label"] for f in report["model_fallbacks"]} == {"qa-engineer", "security-reviewer"}

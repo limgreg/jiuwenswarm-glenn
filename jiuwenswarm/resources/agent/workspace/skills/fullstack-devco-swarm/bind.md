@@ -22,6 +22,7 @@
 - **Contradiction handling.** When QA and security disagree on severity, both opinions are quoted verbatim in the report, and the stricter one gates the release. The Leader never mediates.
 - **Git safety.** All work happens on the run branch, with one commit per lane or fix. No force-push, no history rewrite, no secrets or `.env` files committed.
 - **Ship gate.** Shipping requires `client` approval, or `auto_approve` plus zero unresolved blockers. Unattended runs may open PRs or merge to non-production targets. A production deploy requires an explicit, pre-configured target documented in the playbook.
+- **Model diversity for review.** When several model families are available, prefer routing `review` to a different family than `engineering`, so the reviewers don't share the builders' blind spots. This is a recommendation, never a requirement.
 - **Self-improvement is proposed, not imposed.** The retro may rewrite the project playbook freely. Changes to this skill (`skill_improvements`) need user consent and are applied through `swarmskill-creator` MODIFY.
 
 ## Failure Handling
@@ -39,6 +40,8 @@
 | Release packaging fails | `not_ready`; status `needs_attention` |
 | Ship step fails | Status `ready_awaiting_ship`; the report includes the failure |
 | Retro fails | Report status is kept; the playbook is unchanged; warning |
+| Routed model not in the team model pool, or external CLI missing / unauthenticated / incompatible | Fallback chain: the routed options, then the CLI's own default model, then the team default model. Each step is logged and listed in `model_fallbacks`; the run continues |
+| Unknown routing key or a model outside `available_models` | Dropped before the run starts, with a warning; the role uses the team default model |
 | Team token budget exhausted | The run fails as a whole (SwarmFlow semantics); rerun with a larger budget or a smaller scope |
 
 Missing outputs always appear in the report's `warnings`. They are never silently omitted.

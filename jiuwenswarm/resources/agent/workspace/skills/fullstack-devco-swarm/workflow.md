@@ -55,6 +55,11 @@ graph TD
 | `max_fix_rounds` | int | `2` (0–3) | Verify → fix iterations |
 | `max_tickets` | int | `5` (1–8) | Maintenance tickets per sweep |
 | `signals` | str | — | Maintain mode: CI logs, error reports, issue list |
+| `models` | dict | — | Model per role or group: keys `default`, `planning`, `engineering`, `review`, or any role id / alias. Values are team model pool names |
+| `agent_types` | dict | — | External CLI worker per role or group (`claude`, `codex`) |
+| `available_models` | list | — | Team model pool names; routed names outside this list are dropped before the run |
+
+**Model routing.** For each role, the model comes from its role key, then its group key, then `default`, and otherwise the team default model. Each agent call tries a fallback chain: the routed options, then the external CLI's own model (only when both `agent_type` and `model` are set), then the team default model. Every fallback is logged and reported in `model_fallbacks`; the resolved assignment is reported as `model_plan`. The per-project source of truth is `.devco/models.yaml` ([template](templates/models.yaml)).
 
 Project memory lives in `<project_dir>/.devco/`: `PRD.md`, `DESIGN.md`, `api/`, `BACKLOG.md`, `HEALTH.md`, `reports/qa.md`, `reports/security.md`, and `PLAYBOOK.md`.
 

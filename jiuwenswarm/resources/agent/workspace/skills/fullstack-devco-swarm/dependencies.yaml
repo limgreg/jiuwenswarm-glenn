@@ -20,3 +20,9 @@ tools:
   - name: docker
     required: false
     purpose: Lets DevOps/SRE build and smoke-test containers and docker compose. Without it, container files are written but not verified.
+  - name: claude
+    required: false
+    purpose: Claude Code CLI, used only when agent_types routes a role to "claude" (install with pip install "jiuwenswarm[claude]"). If it is missing, those calls fall back to the native worker.
+  - name: codex
+    required: false
+    purpose: Codex CLI, used only when agent_types routes a role to "codex" (install with pip install "jiuwenswarm[codex]"). If it is missing, those calls fall back to the native worker.

@@ -64,6 +64,90 @@ Intake ─► Architecture ─► Build (backend ∥ frontend ∥ devops) ─►
 | `max_fix_rounds` | `2` | 0–3 |
 | `max_tickets` | `5` | 1–8 per maintenance sweep |
 | `signals` | — | CI logs, error reports or issues for maintain mode |
+| `models` | — | Model per role or group (see below) |
+| `agent_types` | — | External CLI agent per role or group (`claude`, `codex`) |
+| `available_models` | — | Pool names; routed names outside the list are dropped up front |
+
+## Using different models per role
+
+Any role can run on any model you have configured. Routing is per project, and a bad entry never breaks a run.
+
+### 1. Put the models in the team model pool
+
+List every model under `models.defaults` in `~/.jiuwenswarm/config/config.yaml`, or add them under **More → Configuration → Model List** in the web UI. Once two or more entries exist, JiuwenSwarm builds a **team model pool** keyed by `model_name`. The first entry, marked `is_default: true`, is the team default. Any OpenAI-compatible endpoint works, including local servers:
+
+```yaml
+models:
+  defaults:
+    - model_client_config:            # team default
+        model_name: deepseek-chat
+        client_provider: DeepSeek
+        api_base: https://api.deepseek.com
+        api_key: ${DEEPSEEK_API_KEY}
+      is_default: true
+    - model_client_config:            # code model via DashScope
+        model_name: qwen3-coder-plus
+        client_provider: DashScope
+        api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api_key: ${DASHSCOPE_API_KEY}
+    - model_client_config:            # any vendor via OpenRouter
+        model_name: anthropic/claude-sonnet-4
+        client_provider: OpenRouter
+        api_base: https://openrouter.ai/api/v1
+        api_key: ${OPENROUTER_API_KEY}
+    - model_client_config:            # local model (Ollama / vLLM / LM Studio)
+        model_name: qwen2.5-coder:32b
+        client_provider: OpenAI
+        api_base: http://localhost:11434/v1
+        api_key: local
+```
+
+### 2. Route roles to models
+
+Copy `templates/models.yaml` from the skill to `<project>/.devco/models.yaml` and fill it in:
+
+```yaml
+models:
+  default: deepseek-chat                  # every role not listed
+  engineering: qwen3-coder-plus           # backend, frontend, devops
+  review: anthropic/claude-sonnet-4       # qa + security: a different family catches more
+  security: deepseek-reasoner             # role key beats group key
+agent_types:                              # optional external coding-agent CLIs
+  backend: codex
+```
+
+| Key | Covers |
+|---|---|
+| `default` | every role not matched below |
+| `planning` | `product-manager`, `architect` |
+| `engineering` | `backend-engineer`, `frontend-engineer`, `devops-sre` |
+| `review` | `qa-engineer`, `security-reviewer` |
+| role id or alias | `pm`, `architect`/`tech-lead`, `backend`, `frontend`, `devops`/`sre`, `qa`, `security` |
+
+For each role, the model comes from its role key, then its group key, then `default`, and otherwise the team default model.
+
+You can also route ad hoc in the request ("use qwen3-coder-plus for the engineers"), or pass the routing directly as workflow args: `{"models": {...}, "agent_types": {...}, "available_models": [...]}`.
+
+### External coding agents
+
+`agent_types` hands a role to an external CLI agent through openJiuwen's third-party worker support:
+
+- `claude` runs Claude Code. Install with `pip install "jiuwenswarm[claude]"`. It needs an Anthropic-compatible pool model, or no model at all to use the CLI's own default.
+- `codex` runs Codex. Install with `pip install "jiuwenswarm[codex]"`. It needs an OpenAI-compatible pool model, or no model at all.
+
+### Fallbacks
+
+Each agent call tries, in order:
+
+1. the routed options, e.g. `{"model": "m", "agent_type": "codex"}`
+2. the external CLI's own default model (only when both `agent_type` and `model` are set)
+3. the team default model
+
+An unknown model name, a missing CLI or an auth failure therefore costs one retry, not the run. The run report lists:
+
+- `model_plan`: the resolved model and agent type for each role
+- `model_fallbacks`: each fallback, with the error that triggered it
+- `warnings`: unknown routing keys, and names outside `available_models`
 
 ## Keep it self-maintaining with cron
 

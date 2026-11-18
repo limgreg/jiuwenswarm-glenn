@@ -56,7 +56,8 @@ DevCo behaves like a small app development company. It is a mixed pattern. A spe
 ## Workflow
 
 0. **Pre-flight: check dependencies.** Read [dependencies.yaml](dependencies.yaml) and verify each entry. Report anything missing: `required: true` means the run will likely fail; `required: false` means it still works, with less. **The user decides** whether to proceed. Also confirm `project_dir` (an absolute path) and the mode.
-1. **Choose the mode and args.** Use `build` for a new app, `feature` for a change to an existing repo, or `maintain` for a health sweep. Args: `request`, `mode`, `project_dir`, `stack`, `auto_approve`, `max_fix_rounds`, `max_tickets`, `signals`. See [workflow.md](workflow.md) § Args.
+1. **Choose the mode and args.** Use `build` for a new app, `feature` for a change to an existing repo, or `maintain` for a health sweep. Args: `request`, `mode`, `project_dir`, `stack`, `auto_approve`, `max_fix_rounds`, `max_tickets`, `signals`, `models`, `agent_types`, `available_models`. See [workflow.md](workflow.md) § Args.
+   - **Model routing:** if `<project_dir>/.devco/models.yaml` exists, pass its `models` and `agent_types` maps through unchanged. A model the user names in the request ("use Qwen for the engineers") overrides the file. Pass the names in the configured model list (`models.defaults[].model_name`) as `available_models` whenever you know them. If no routing is given, every role uses the team default model. To set routing up for a project, copy [templates/models.yaml](templates/models.yaml) to `.devco/models.yaml`.
 2. **Intake.**
    - build/feature: `product-manager` writes `.devco/PRD.md`, and the `client` approves it or gives feedback. There is one revision round. A second rejection halts the run.
    - maintain: `devops-sre`, `qa-engineer` and `security-reviewer` scan health in parallel. Then `product-manager` triages the findings into ≤ `max_tickets` tickets. If there are zero tickets, the run reports `healthy` and goes straight to the retro.
@@ -95,3 +96,4 @@ DevCo behaves like a small app development company. It is a mixed pattern. A spe
 | [dependencies.yaml](dependencies.yaml) | External skills and tools required to run | **Startup** — verify deps, report missing items, user decides go/no-go |
 | [scripts/workflow.py](scripts/workflow.py) | Executable SwarmFlow workflow (all three modes) | When running in SwarmFlow mode: `swarmflow(script_path=<this file>, args={...})` |
 | [templates/PLAYBOOK.md](templates/PLAYBOOK.md) | Seed for `<project>/.devco/PLAYBOOK.md` | First run on a project — copy it in if no playbook exists |
+| [templates/models.yaml](templates/models.yaml) | Per-role / per-group model and external-agent routing | When the user wants different models per role — copy to `<project>/.devco/models.yaml` |
