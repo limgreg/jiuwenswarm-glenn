@@ -324,3 +324,23 @@ def test_runs_on_real_swarmflow_engine_with_model_pool():
     # "not-in-pool" is rejected by the engine and retried on the team default.
     assert ("qa-engineer", None, None) in calls
     assert {f["label"] for f in report["model_fallbacks"]} == {"qa-engineer", "security-reviewer"}
+
+
+@pytest.mark.parametrize("mode", ["build", "maintain"])
+def test_demo_simulator_runs_end_to_end(mode):
+    """examples/devco-demo/simulate.py stays in sync with the workflow."""
+    pytest.importorskip("openjiuwen.agent_teams.workflow.engine.runner")
+    spec = importlib.util.spec_from_file_location(
+        "devco_demo_simulate", REPO_ROOT / "examples" / "devco-demo" / "simulate.py",
+    )
+    sim = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sim)
+    args = {"mode": mode, "request": "Build Shelfie" if mode == "build" else "",
+            "project_dir": "/srv/shelfie", "auto_approve": mode == "maintain",
+            "models": {"default": "deepseek-chat", "engineering": "qwen3-coder-plus"}}
+    report = asyncio.run(sim.run_workflow(
+        str(WORKFLOW), args=args,
+        backend=sim.NarratingBackend(fixtures=sim.fixtures(False, mode)),
+    ))
+    assert report["status"] == "shipped"
+    assert report["model_fallbacks"] == []

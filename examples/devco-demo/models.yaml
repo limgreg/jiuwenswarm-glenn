@@ -1,0 +1,12 @@
+# Example model routing for the Shelfie demo.
+# Copy to <project_dir>/.devco/models.yaml and replace the names with models that
+# exist in YOUR config.yaml `models.defaults` list (the team model pool).
+# Delete the whole file to run every role on your default model.
+
+models:
+  default: deepseek-chat          # PM, architect, DevOps, retro
+  engineering: qwen3-coder-plus   # backend + frontend engineers write the code
+  review: deepseek-reasoner       # QA + security think hard about what can break
+
+# agent_types:                    # optional: hand a role to an external coding CLI
+#   backend: codex                # needs: pip install "jiuwenswarm[codex]"

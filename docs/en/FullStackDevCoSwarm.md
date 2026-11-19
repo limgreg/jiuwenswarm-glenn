@@ -6,6 +6,8 @@
 - **ship a feature** across backend and frontend in an existing repository
 - **maintain** a codebase on a schedule: scan its health, triage, fix, verify and release, without a human driving each step
 
+> **New here?** Follow the hands-on tutorial in [`examples/devco-demo/`](../../examples/devco-demo/README.md). It includes a no-API-key dry run and a demo project to build.
+
 It ships with an executable SwarmFlow script (`scripts/workflow.py`), so a run is deterministic, can be watched in `/swarmflows`, and is bounded by explicit limits.
 
 ## The company
