@@ -18,6 +18,23 @@ ENV PATH=$PATH:/home/app/.local/bin
 WORKDIR /app/jiuwenswarm/jiuwenswarm/channels/web/frontend
 RUN npm install && npm run build
 
+# openjiuwen is installed from gitcode.com, which can drop long transfers from
+# outside China. Fetch it in its own step with retries, then rewrite the gitcode
+# URL to that local copy so pip's git+https dependency never goes back online.
+ARG OPENJIUWEN_REF=develop
+RUN git config --global http.version HTTP/1.1 \
+    && git config --global http.lowSpeedLimit 1000 \
+    && git config --global http.lowSpeedTime 60 \
+    && for i in 1 2 3 4 5 6; do \
+         git clone --depth 1 -b "${OPENJIUWEN_REF}" \
+           https://gitcode.com/openJiuwen/agent-core.git /tmp/agent-core && break; \
+         echo "openjiuwen clone attempt ${i} failed; retrying"; \
+         rm -rf /tmp/agent-core; sleep $((i * 15)); \
+       done \
+    && test -d /tmp/agent-core/.git \
+    && git config --global url."file:///tmp/agent-core".insteadOf \
+         "https://gitcode.com/openJiuwen/agent-core.git"
+
 # PIP_INDEX_URL: leave the default (pypi.org) or set a nearer mirror at build time,
 # e.g. --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG PIP_INDEX_URL=https://pypi.org/simple
