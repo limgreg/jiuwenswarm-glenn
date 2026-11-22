@@ -78,7 +78,8 @@ sudo docker compose up -d --build
 
 ## 5. Open it on your iPhone
 
-1. Turn on the Tailscale app.
+0. In the [Tailscale admin console](https://login.tailscale.com/admin/machines), a new machine **`devco`** appears. This is the container, separate from any Tailscale app installed on UGOS itself. Open its **⋯** menu → **Disable key expiry**, so this always-on server doesn't drop off the tailnet after 180 days.
+1. Turn on the Tailscale app. If the admin console shows your phone as **Expired**, open the app and sign in again first; an expired device can't reach `devco`.
 2. In Safari, open `https://devco.<your-tailnet>.ts.net`. Tip: **Share → Add to Home Screen** makes it feel like an app.
 3. Go to **More → Configuration**, add your model (`api_base`, `api_key`, `model`, `model_provider`), and click **Test**.
 4. Turn on SwarmFlow (one time). Over SSH, either:

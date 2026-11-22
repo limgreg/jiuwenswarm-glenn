@@ -7,7 +7,7 @@
 
 services:
   tailscale:
-    image: tailscale/tailscale:v1.76.1
+    image: tailscale/tailscale:v1.104.7
     container_name: devco-tailscale
     hostname: ${TS_HOSTNAME:-devco}
     environment:
