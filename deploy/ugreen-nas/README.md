@@ -47,8 +47,9 @@ SSH in from a computer on your home network (`ssh <your-ugos-user>@<nas-ip>`), t
 sudo mkdir -p /volume1/docker/devco/data /volume1/docker/devco/projects
 sudo chown -R 1000:1000 /volume1/docker/devco/data /volume1/docker/devco/projects
 cd /volume1/docker/devco
-# UGOS has no git, so run git from a throwaway container:
-sudo docker run --rm -v /volume1/docker/devco:/git alpine/git \
+# UGOS has no git, so run git from a throwaway container.
+# GIT_LFS_SKIP_SMUDGE=1 skips the demo videos (Git LFS); the build does not need them.
+sudo docker run --rm -e GIT_LFS_SKIP_SMUDGE=1 -v /volume1/docker/devco:/git alpine/git \
   clone -b claude/sweet-mendel-6case1 https://github.com/limgreg/jiuwenswarm-glenn.git /git/src
 ```
 
@@ -124,7 +125,7 @@ sudo docker exec -it devco-jiuwenswarm jiuwenswarm-tui
 | Task | Command (in `deploy/ugreen-nas`) |
 |---|---|
 | Stop / start | `sudo docker compose stop` / `sudo docker compose start` |
-| Update to the latest code | `sudo docker run --rm -v /volume1/docker/devco/src:/git -w /git alpine/git pull && sudo docker compose up -d --build` |
+| Update to the latest code | `sudo docker run --rm -e GIT_LFS_SKIP_SMUDGE=1 -v /volume1/docker/devco/src:/git -w /git alpine/git pull && sudo docker compose up -d --build` |
 | Logs | `sudo docker compose logs -f jiuwenswarm` |
 | Back up | Copy `/volume1/docker/devco/data` (config, keys, sessions) and `projects/` (your apps), e.g. with UGOS backup / snapshots |
 | Remove | `sudo docker compose down` (the data folders stay) |
