@@ -293,9 +293,9 @@ def test_runs_on_real_swarmflow_engine_with_model_pool():
         def model_pool_names(self):
             return ["deepseek-chat", "qwen3-coder"]
 
-        async def run(self, prompt, opts, schema_json, *, call_key=None):
+        async def run(self, prompt, opts, schema_json, **kwargs):  # kwargs differ across engine versions
             calls.append((opts.get("label"), opts.get("model"), opts.get("agent_type")))
-            return await super().run(prompt, opts, schema_json, call_key=call_key)
+            return await super().run(prompt, opts, schema_json, **kwargs)
 
     review = {"result": "review", "verdict": "pass", "defects": []}
     fixtures = {
@@ -321,9 +321,14 @@ def test_runs_on_real_swarmflow_engine_with_model_pool():
     assert not [line for line in logs if "[lint]" in line]
     assert ("backend-engineer", "qwen3-coder", None) in calls
     assert ("architect-design", "deepseek-chat", None) in calls
-    # "not-in-pool" is rejected by the engine and retried on the team default.
-    assert ("qa-engineer", None, None) in calls
-    assert {f["label"] for f in report["model_fallbacks"]} == {"qa-engineer", "security-reviewer"}
+    primitives = pytest.importorskip("openjiuwen.agent_teams.workflow.engine.primitives")
+    if hasattr(primitives, "_validate_model_hint"):
+        # Newer engines reject "not-in-pool" up front; the call is retried on the team default.
+        assert ("qa-engineer", None, None) in calls
+        assert {f["label"] for f in report["model_fallbacks"]} == {"qa-engineer", "security-reviewer"}
+    else:
+        # Older engines (e.g. openjiuwen 0.1.16.x) pass unknown names through to the backend.
+        assert ("qa-engineer", "not-in-pool", None) in calls
 
 
 @pytest.mark.parametrize("mode", ["build", "maintain"])

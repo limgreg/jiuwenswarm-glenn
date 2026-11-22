@@ -29,7 +29,7 @@ services:
   jiuwenswarm:
     build:
       context: ../..
-      dockerfile: deploy/ugreen-nas/Dockerfile
+      dockerfile: deploy/ugreen-nas/${DEVCO_DOCKERFILE:-Dockerfile}
     image: devco-jiuwenswarm:local
     container_name: devco-jiuwenswarm
     network_mode: service:tailscale     # no ports: unreachable from the LAN
@@ -38,6 +38,7 @@ services:
     environment:
       DEVCO_PUBLIC_HOST: ${TS_HOSTNAME:-devco}.${TS_TAILNET:?set TS_TAILNET in .env}
       TZ: ${TZ:-UTC}
+      DEVCO_FORCE_SKILL_UPDATE: ${DEVCO_FORCE_SKILL_UPDATE:-0}
     volumes:
       - ${DEVCO_DATA_DIR}/jiuwenswarm:/home/app/.jiuwenswarm
       - ${DEVCO_PROJECTS_DIR:?set DEVCO_PROJECTS_DIR in .env}:/projects

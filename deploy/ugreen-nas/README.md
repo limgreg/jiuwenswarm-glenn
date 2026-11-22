@@ -71,7 +71,7 @@ sudo nano .env        # fill in TS_AUTHKEY, TS_TAILNET; check the two folder pat
 sudo docker compose up -d --build
 ```
 
-- The **first build takes 10–25 minutes**: it installs Python and Node dependencies and builds the web UI.
+- The **first build takes about 3–10 minutes**. It installs the released JiuwenSwarm from PyPI (version pinned in the `Dockerfile`), which already includes the web UI, and adds the DevCo skill from this repo. It doesn't need gitcode.com.
 - **Slow downloads (e.g. from mainland China)?** Add `--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` by running `sudo docker compose build --build-arg PIP_INDEX_URL=… && sudo docker compose up -d`.
 - **Watch it start:** `sudo docker compose logs -f`. Wait for the web UI line and `[devco] web UI (via Tailscale): https://devco.tail1234.ts.net`.
 - Both containers also appear in the UGOS **Docker** app, where you can see logs, restart, and check CPU/RAM.
@@ -82,11 +82,12 @@ sudo docker compose up -d --build
 1. Turn on the Tailscale app. If the admin console shows your phone as **Expired**, open the app and sign in again first; an expired device can't reach `devco`.
 2. In Safari, open `https://devco.<your-tailnet>.ts.net`. Tip: **Share → Add to Home Screen** makes it feel like an app.
 3. Go to **More → Configuration**, add your model (`api_base`, `api_key`, `model`, `model_provider`), and click **Test**.
-4. Turn on SwarmFlow (one time). Over SSH, either:
-   - edit `/volume1/docker/devco/data/jiuwenswarm/config/config.yaml`, set `enable_swarmflow: true` under `modes.team.jiuwen_team`, then run `sudo docker compose restart jiuwenswarm`; or
-   - run `sudo docker exec -it devco-jiuwenswarm jiuwenswarm-tui` and type `/swarmflow on`.
-
-   Then start a **new chat** in the web UI.
+4. Turn on SwarmFlow (one time). Over SSH, in `deploy/ugreen-nas`:
+   ```bash
+   sudo sed -i 's/enable_swarmflow: false/enable_swarmflow: true/' /volume1/docker/devco/data/jiuwenswarm/config/config.yaml
+   sudo docker compose restart jiuwenswarm
+   ```
+   Then start a **new chat** in the web UI. Under **Skills → My Skills** you should see `fullstack-devco-swarm`.
 
 You're ready. In a **Team** chat, paste the demo brief from `examples/devco-demo/brief.md`, with:
 
@@ -115,7 +116,7 @@ The bot polls Telegram over an outbound connection, so no ports need opening.
 
 ## 7. Optional: the TUI over SSH
 
-The terminal UI has the live SwarmFlow monitor (`/swarmflows`). From an SSH session to the NAS, e.g. Termius or Blink on your iPhone while on home Wi-Fi:
+The terminal UI has the live SwarmFlow monitor (`/swarmflows`). The released TUI package has no Linux build yet, so it is only in the **source** image. Set `DEVCO_DOCKERFILE=Dockerfile.source` in `.env` and rebuild. That build needs gitcode.com to be reachable; it retries the download. Then, from an SSH session to the NAS (e.g. Termius or Blink on your iPhone while on home Wi-Fi):
 
 ```bash
 sudo docker exec -it devco-jiuwenswarm jiuwenswarm-tui
@@ -140,7 +141,8 @@ sudo docker exec -it devco-jiuwenswarm jiuwenswarm-tui
 | Certificate warning | **Enable HTTPS** in the Tailscale DNS settings (step 1), then `sudo docker compose restart tailscale` |
 | Page loads but chat never connects | `TS_TAILNET` / `TS_HOSTNAME` in `.env` must match the URL exactly. Check `sudo docker compose logs jiuwenswarm \| grep origin_not_allowed` |
 | `Permission denied` under `/home/app/.jiuwenswarm` | Re-run the `chown -R 1000:1000` from step 2 |
-| Build fails on `openjiuwen` (`gitcode.com`) | The NAS needs to reach gitcode.com during the build. Retry, or build on a network that can reach it |
+| Build fails on `openjiuwen` (`gitcode.com`) | Only the source image (`DEVCO_DOCKERFILE=Dockerfile.source`) needs gitcode.com. Remove that line from `.env` to use the default release build |
+| `fullstack-devco-swarm` missing from **My Skills** | Check the log for `[devco] installed skill`. After updating the repo, set `DEVCO_FORCE_SKILL_UPDATE=1` in `.env` for one `sudo docker compose up -d --build`, then set it back to `0` |
 | NAS slows down during big builds | Uncomment `mem_limit` / `cpus` in `docker-compose.yml` |
 
 **Known limitation.** The swarm's DevOps role can't run `docker compose up` for the apps it builds, because the container deliberately has no access to the NAS's Docker. Build checks and tests still run. To try a finished app, run `sudo docker compose up` in its folder under `projects/` yourself.

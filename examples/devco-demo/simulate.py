@@ -257,13 +257,13 @@ class NarratingBackend(MockBackend):
     def model_pool_names(self):
         return POOL
 
-    async def run(self, prompt, opts, schema_json, *, call_key=None):
+    async def run(self, prompt, opts, schema_json, **kwargs):  # kwargs differ across engine versions
         label = opts.get("label", "?")
         target = opts.get("model") or "team default"
         if opts.get("agent_type"):
             target = opts["agent_type"] + " CLI / " + target
         print(f"   {icon(label)} {label:<30} model: {target}")
-        return await super().run(prompt, opts, schema_json, call_key=call_key)
+        return await super().run(prompt, opts, schema_json, **kwargs)
 
 
 def show_log(line: str) -> None:
