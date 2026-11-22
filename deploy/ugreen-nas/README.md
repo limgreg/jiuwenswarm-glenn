@@ -47,11 +47,13 @@ SSH in from a computer on your home network (`ssh <your-ugos-user>@<nas-ip>`), t
 sudo mkdir -p /volume1/docker/devco/data /volume1/docker/devco/projects
 sudo chown -R 1000:1000 /volume1/docker/devco/data /volume1/docker/devco/projects
 cd /volume1/docker/devco
-sudo git clone -b claude/sweet-mendel-6case1 https://github.com/limgreg/jiuwenswarm-glenn.git src
+# UGOS has no git, so run git from a throwaway container:
+sudo docker run --rm -v /volume1/docker/devco:/git alpine/git \
+  clone -b claude/sweet-mendel-6case1 https://github.com/limgreg/jiuwenswarm-glenn.git /git/src
 ```
 
 - **Different volume?** If your storage pool is `/volume2`, use that everywhere instead of `/volume1`.
-- **No `git` on the NAS?** Download the branch as a ZIP from GitHub on your computer. Upload it with the UGOS **Files** app to `docker/devco/`, unzip it there, and rename the folder to `src`.
+- **Clone asks for a password or says "not found"?** The repository is private. Use a GitHub fine-grained token with read-only *Contents* access, via the URL `https://<TOKEN>@github.com/limgreg/jiuwenswarm-glenn.git`. Or download the branch as a ZIP on your computer, upload it with the UGOS **Files** app to `docker/devco/`, unzip it there, and rename the folder to `src`.
 - **The `chown 1000:1000`:** the container runs as user ID 1000 and needs to write to these two folders.
 
 ## 3. Configure
@@ -122,7 +124,7 @@ sudo docker exec -it devco-jiuwenswarm jiuwenswarm-tui
 | Task | Command (in `deploy/ugreen-nas`) |
 |---|---|
 | Stop / start | `sudo docker compose stop` / `sudo docker compose start` |
-| Update to the latest code | `cd ../.. && sudo git pull && cd deploy/ugreen-nas && sudo docker compose up -d --build` |
+| Update to the latest code | `sudo docker run --rm -v /volume1/docker/devco/src:/git -w /git alpine/git pull && sudo docker compose up -d --build` |
 | Logs | `sudo docker compose logs -f jiuwenswarm` |
 | Back up | Copy `/volume1/docker/devco/data` (config, keys, sessions) and `projects/` (your apps), e.g. with UGOS backup / snapshots |
 | Remove | `sudo docker compose down` (the data folders stay) |
