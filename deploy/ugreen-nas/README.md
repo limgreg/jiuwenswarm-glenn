@@ -44,8 +44,8 @@ Never forward a port to this on your router.
 SSH in from a computer on your home network (`ssh <your-ugos-user>@<nas-ip>`), then:
 
 ```bash
-sudo mkdir -p /volume1/docker/devco/data /volume1/docker/devco/projects
-sudo chown -R 1000:1000 /volume1/docker/devco/data /volume1/docker/devco/projects
+sudo mkdir -p /volume1/docker/devco/data/jiuwenswarm /volume1/docker/devco/data/tailscale /volume1/docker/devco/projects
+sudo chown -R 1000:1000 /volume1/docker/devco/data/jiuwenswarm /volume1/docker/devco/projects
 cd /volume1/docker/devco
 # UGOS has no git, so run git from a throwaway container.
 # GIT_LFS_SKIP_SMUDGE=1 skips the demo videos (Git LFS); the build does not need them.
@@ -55,7 +55,7 @@ sudo docker run --rm -e GIT_LFS_SKIP_SMUDGE=1 -v /volume1/docker/devco:/git alpi
 
 - **Different volume?** If your storage pool is `/volume2`, use that everywhere instead of `/volume1`.
 - **Clone asks for a password or says "not found"?** The repository is private. Use a GitHub fine-grained token with read-only *Contents* access, via the URL `https://<TOKEN>@github.com/limgreg/jiuwenswarm-glenn.git`. Or download the branch as a ZIP on your computer, upload it with the UGOS **Files** app to `docker/devco/`, unzip it there, and rename the folder to `src`.
-- **The `chown 1000:1000`:** the container runs as user ID 1000 and needs to write to these two folders.
+- **The `chown 1000:1000`:** the container runs as user ID 1000 and needs to write to `data/jiuwenswarm` and `projects`. Create them *before* the first start; otherwise Docker creates them owned by root and the container crash-loops with `Permission denied: '/home/app/.jiuwenswarm/...'`.
 
 ## 3. Configure
 
@@ -140,7 +140,7 @@ sudo docker exec -it devco-jiuwenswarm jiuwenswarm-tui
 | Safari: "can't connect" | Is the Tailscale app on and signed in to the same account? Is the machine `devco` online in the admin console? |
 | Certificate warning | **Enable HTTPS** in the Tailscale DNS settings (step 1), then `sudo docker compose restart tailscale` |
 | Page loads but chat never connects | `TS_TAILNET` / `TS_HOSTNAME` in `.env` must match the URL exactly. Check `sudo docker compose logs jiuwenswarm \| grep origin_not_allowed` |
-| `Permission denied` under `/home/app/.jiuwenswarm` | Re-run the `chown -R 1000:1000` from step 2 |
+| `Permission denied` under `/home/app/.jiuwenswarm`, container keeps restarting | `sudo chown -R 1000:1000 /volume1/docker/devco/data/jiuwenswarm /volume1/docker/devco/projects`, then `sudo docker compose restart jiuwenswarm` |
 | Build fails on `openjiuwen` (`gitcode.com`) | Only the source image (`DEVCO_DOCKERFILE=Dockerfile.source`) needs gitcode.com. Remove that line from `.env` to use the default release build |
 | `fullstack-devco-swarm` missing from **My Skills** | Check the log for `[devco] installed skill`. After updating the repo, set `DEVCO_FORCE_SKILL_UPDATE=1` in `.env` for one `sudo docker compose up -d --build`, then set it back to `0` |
 | NAS slows down during big builds | Uncomment `mem_limit` / `cpus` in `docker-compose.yml` |

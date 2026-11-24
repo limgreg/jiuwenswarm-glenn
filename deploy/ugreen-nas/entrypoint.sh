@@ -2,6 +2,17 @@
 # First-boot init + safety settings, then start JiuwenSwarm in the foreground.
 set -euo pipefail
 
+# Bind-mounted folders that Docker auto-created are owned by root; fail with a fix.
+for dir in "${HOME}/.jiuwenswarm" /projects; do
+    if [ -d "${dir}" ] && [ ! -w "${dir}" ]; then
+        echo "[devco] ERROR: ${dir} is not writable by uid $(id -u)." >&2
+        echo "[devco] On the NAS run:  sudo chown -R $(id -u):$(id -g) <host folder mounted at ${dir}>" >&2
+        echo "[devco] (see deploy/ugreen-nas/README.md, step 2), then: sudo docker compose restart jiuwenswarm" >&2
+        sleep 30   # avoid a tight restart loop flooding the log
+        exit 1
+    fi
+done
+
 CONFIG_DIR="${HOME}/.jiuwenswarm/config"
 ENV_FILE="${CONFIG_DIR}/.env"
 
